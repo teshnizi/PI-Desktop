@@ -1,3 +1,4 @@
+import { crc32, deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, getCurrentTools, getCurrentSystemPrompt, normalizeContext, type AssistantMessage, type Message } from "@earendil-works/pi-ai";
@@ -188,4 +189,69 @@ describe("system state through the Desktop user path", () => {
       expect(getCurrentTools(f.requests[2]).some((tool) => tool.name === "Skill")).toBe(false);
     } finally { await f.runtime.dispose(); }
   });
+
+  it("sends a restored history of more than 20 Retina screenshots with no image side above 2000 px", async () => {
+    // A 3024x1890 PNG, the size of the macOS screenshots that Read returned.
+    const chunk = (type: string, data: Buffer) => {
+      const length = Buffer.alloc(4);
+      length.writeUInt32BE(data.length);
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, "ascii"), data])));
+      return Buffer.concat([length, Buffer.from(type, "ascii"), data, crc]);
+    };
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(3024);
+    header.writeUInt32BE(1890, 4);
+    header[8] = 8; header[9] = 2;
+    const screenshot = Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header),
+      // All-zero scanlines: filter type 0 and black pixels.
+      chunk("IDAT", deflateSync(Buffer.alloc((3024 * 3 + 1) * 1890))), chunk("IEND", Buffer.alloc(0)),
+    ]).toString("base64");
+    const createdAt = new Date().toISOString();
+    const history: UiMessage[] = [{ id: "user-1", role: "user", content: "Check every screen", createdAt, status: "complete" }];
+    for (let index = 0; index < 22; index += 1) {
+      history.push(
+        { id: `assistant-${index}`, role: "assistant", content: "Reading the screenshot.", createdAt, status: "complete" },
+        { id: `read-${index}`, role: "tool", content: "", createdAt, status: "complete", toolCallId: `read-${index}`,
+          toolName: "Read", toolArgs: { path: `/scratch/screen-${index}.png` }, toolStatus: "success",
+          toolResult: { content: [{ type: "text", text: `Image file /scratch/screen-${index}.png` },
+            { type: "image", data: screenshot, mimeType: "image/png" }] } },
+      );
+    }
+    const persisted = structuredClone(history[2].toolResult);
+    const f = fixture(history);
+    try {
+      await f.prompt("user-2");
+      let body: unknown;
+      await streamAnthropic({
+        id: "claude-fixture", name: "Claude fixture", api: "anthropic-messages", provider: "anthropic",
+        baseUrl: "http://localhost", reasoning: false, input: ["text", "image"], contextWindow: 200_000, maxTokens: 1000,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, compat: { supportsMidConvoSystemMessages: true },
+      }, normalizeContext({ messages: f.requests[0] }), {
+        apiKey: "test", maxRetries: 0, fetch: async (_input, init) => {
+          body = JSON.parse(String(init?.body));
+          return new Response(
+            'event: message_start\ndata: {"type":"message_start","message":{"id":"m","model":"claude-fixture","usage":{"input_tokens":1,"output_tokens":0}}}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
+      }).result();
+      const images: Array<{ media_type: string; data: string }> = [];
+      JSON.stringify(body, (key, value) => {
+        if (key === "source" && value?.type === "base64") images.push(value);
+        return value;
+      });
+      expect(images).toHaveLength(22);
+      for (const image of images) {
+        expect(image.media_type).toBe("image/png");
+        const png = Buffer.from(image.data, "base64");
+        expect(Math.max(png.readUInt32BE(16), png.readUInt32BE(20))).toBeLessThanOrEqual(2000);
+      }
+      // The model is told how the downscaled picture maps to the original file.
+      expect(JSON.stringify(body)).toContain("[Image: original 3024x1890, displayed at 2000x1250.");
+      // The persisted transcript keeps the original screenshot.
+      expect(f.rows.find((row) => row.id === "read-0")?.toolResult).toEqual(persisted);
+    } finally { await f.runtime.dispose(); }
+  }, 30_000);
 });
