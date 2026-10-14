@@ -78,6 +78,27 @@ describe("model system journal", () => {
     expect(replay.map((row) => row.id)).toContain("system-distinct");
   });
 
+  it("replays an update whose following prompt was never stored after the next tool-result run, in recorded order", () => {
+    const row = (id: string, role: UiMessage["role"], extra: Partial<UiMessage> = {}): UiMessage => ({ ...userRow, id, role, ...extra });
+    const update = (id: string, context: string, beforeMessageId: string, afterMessageId: string) => row(id, "system", { modelSystem: {
+      version: 1, messageJson: JSON.stringify({ role: "system", content: "", sections: { context }, timestamp: 1 }), beforeMessageId, afterMessageId,
+    } });
+    const replay = orderSystemRows([
+      userRow,
+      row("waiting", "assistant"),
+      row("delegate-tool", "tool", { parentToolCallId: "task-1" }),
+      update("early", "while waiting", "resume-prompt", "waiting"),
+      row("resumed", "assistant"),
+      row("call-1", "tool"),
+      update("late", "during the second call", "call-2", "resumed"),
+      row("call-2", "tool"),
+      row("answer", "assistant"),
+    ]);
+    expect(replay.map((message) => message.id)).toEqual([
+      userRow.id, "waiting", "delegate-tool", "resumed", "call-1", "call-2", "early", "late", "answer",
+    ]);
+  });
+
   it("recognizes a reconstructed system event after restoring or remembering it", () => {
     const restored = new SystemTranscriptJournal();
     restored.restore({ ...userRow, id: "saved-system", role: "system", modelSystem: {

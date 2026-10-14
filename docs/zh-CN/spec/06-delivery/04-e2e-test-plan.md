@@ -5809,6 +5809,8 @@ eleven-tool-round desktop paths are verified by
 | 品质（工具调用 id 唯一） | E2E-RUNTIME-unique-tool-call-ids-per-request |
 | C — 对话与流式（循环上下文归属） | E2E-RUNTIME-loop-context-ownership |
 | 品质（循环上下文归属） | E2E-RUNTIME-loop-context-ownership |
+| C：对话与流式（委托续跑前的系统更新恢复） | E2E-RUNTIME-delegation-resume-system-update-restore |
+| 品质（委托续跑前的系统更新恢复） | E2E-RUNTIME-delegation-resume-system-update-restore |
 | G — 插件宿主生命周期（崩溃上报） | E2E-PLUGIN-crash-report-names-the-exit-code |
 | 品质（崩溃上报） | E2E-PLUGIN-crash-report-names-the-exit-code |
 | F — 持久化（存储的模型绑定数组） | E2E-PROVIDER-stored-binding-array-reads-entry-by-entry |
@@ -9139,6 +9141,21 @@ Follow the [current S3 acceptance scenario](/spec/06-delivery/04-e2e-test-plan#e
   因此由 `tool-call-dedupe.test.ts`（request wire contract）直接驱动 pi-ai 的消息变换，固定「请求把调用与结果隔开时同一个 call id
   会拿到两条输出」这一机制。
 - **状态：** 单元测试覆盖；没有端到端驱动从「循环追加过的上下文」构建新回合的请求。
+
+### E2E-RUNTIME-delegation-resume-system-update-restore
+
+- **先决条件：** 一个带后台 `explorer` 委托的 Agent 会话，以及一个确定性提供商夹具：父级回复在委托仍在运行时结束。委托结算后
+  父级的 context 段发生变化，因此一条模型系统记录保存在运行时的续跑提示之前，而续跑提示本身不保存。一个重新创建的运行时，
+  以及启用对话中途系统消息的确定性 Anthropic Messages 夹具；不使用真实凭据。
+- **步骤：** 启动委托，让父级结束回复，再让委托完成，使运行时续跑父级。从已保存的行重启，发一条提示，读取夹具收到的出站请求体。
+- **预期：** 父级等待期间产生的 context 更新在父级那条等待回复之后重放，每条对话中途的 `system` 消息都跟在 `user` 消息之后，
+  因此提供商不会回 `role 'system' must follow a 'user' message or an 'assistant' message ending in a server tool result`。
+  保存在未存储消息之前的记录相对之后的记录保持记录顺序。
+- **规格：** 03-runtime/02-agent-runtime §5f、03-runtime/04-data-storage、08-meta/decisions-log D328。**验收：** C（对话与流）、品质。
+  **里程碑：** Post-MVP 回归覆盖。
+- **自动化：** `packages/agent-runtime/src/runtime.test.ts` 通过真实运行时驱动委托，把保存的行恢复进另一个运行时，并把捕获的请求交给
+  Pi 的 Anthropic 适配器；`system-transcript-journal.test.ts` 固定工具结果段之后的重放位置与记录顺序。
+- **状态：** 单元测试覆盖；没有端到端驱动对 Anthropic 提供商夹具恢复这类转录。
 
 ### E2E-MCP-HTTP-ACK — HTTP acknowledgement and authorization status
 

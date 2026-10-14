@@ -37,10 +37,16 @@ function serializedSystemMessage(message: SystemMessage): string {
   });
 }
 
-/** Reorder only internal rows, whose following user row may have arrived first. */
+/**
+ * Reorder only internal rows, whose following user row may have arrived first.
+ * A row whose following message was never stored (the runtime's own prompt,
+ * such as the delegation resume) moves forward to just after the next user row
+ * or tool-result run: between two assistants a later system message is invalid.
+ */
 export function orderSystemRows(history: readonly UiMessage[]): UiMessage[] {
   const rows = history.filter((row) => !row.modelSystem);
   const seen = new Set<string>();
+  let moved: UiMessage | undefined;
   for (const row of history) {
     if (!row.modelSystem) continue;
     if (row.role !== "system" || row.modelSystem.version !== 1) {
@@ -55,10 +61,25 @@ export function orderSystemRows(history: readonly UiMessage[]): UiMessage[] {
       const previous = rows.findIndex((candidate) => candidate.id === row.modelSystem?.afterMessageId);
       if (previous >= 0) {
         index = previous + 1;
+        if (before) {
+          let slot = -1;
+          for (let next = index; next < rows.length; next++) {
+            const candidate = rows[next];
+            if (candidate.parentToolCallId || candidate.modelSystem) continue;
+            if (candidate.role === "tool") slot = next + 1;
+            else if (slot >= 0) break;
+            else if (candidate.role === "user") { slot = next + 1; break; }
+          }
+          index = slot < 0 ? rows.length : slot;
+          moved = row;
+        }
         while (rows[index]?.modelSystem) index++;
       }
     }
-    rows.splice(index < 0 ? rows.length : index, 0, row);
+    if (index < 0) index = rows.length;
+    // Keep recorded order: a later update never lands before a moved one.
+    if (moved && moved !== row) index = Math.max(index, rows.indexOf(moved) + 1);
+    rows.splice(index, 0, row);
   }
   return rows;
 }

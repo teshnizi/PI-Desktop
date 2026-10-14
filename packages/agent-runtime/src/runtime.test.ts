@@ -7,9 +7,12 @@ import {
   createAssistantMessageEventStream,
   getCurrentTools,
   getCurrentSystemMessage,
+  normalizeContext,
   toToolDeclaration,
   type AssistantMessage,
+  type Message,
 } from "@earendil-works/pi-ai";
+import { streamSimple as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { formatSessionMessage, type SessionMessageOrigin } from "@pi-desktop/shared";
 import { estimateContextTokens as estimateTranscriptTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { buildSessionContext } from "./session-context.js";
@@ -8908,6 +8911,101 @@ describe("DesktopAgentRuntime subagents", () => {
 
     subagentRuns.deferred = false;
     await runtime.dispose();
+  });
+
+  it("replays updates made while waiting for a delegate after a user turn", async () => {
+    subagentRuns.calls.length = 0;
+    subagentRuns.instances.length = 0;
+    subagentRuns.deferred = true;
+    subagentRuns.resolveRun = undefined;
+    const reply = (content: AssistantMessage["content"], stopReason: "stop" | "toolUse" = "stop"): AssistantMessage => ({
+      role: "assistant", api: "openai-completions", provider: "local", model: "local-model", timestamp: Date.now(), stopReason, content,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    });
+    const rows: UiMessage[] = [];
+    const start = (history: UiMessage[], replies: AssistantMessage[]) => {
+      const requests: Message[][] = [];
+      const runtime = createRuntime({
+        history, subagents: [explorer],
+        host: { call: vi.fn(async (method: string, params: { message: UiMessage }) => {
+          if (method === "session.appendMessage") rows.push(params.message);
+        }) },
+        // Persist the way Electron main does: only rows the runtime emits.
+        onEvent: (envelope) => {
+          const { event } = envelope as AgentEventEnvelope;
+          if (event.type === "tool_start") rows.push({
+            id: event.toolCallId, role: "tool", content: "", toolCallId: event.toolCallId,
+            toolName: event.toolName, toolArgs: event.args, createdAt: new Date().toISOString(),
+          });
+          if (event.type === "message_end") {
+            const index = rows.findIndex((row) => row.id === event.message.id);
+            if (index < 0) rows.push(event.message); else rows[index] = event.message;
+          }
+        },
+      });
+      const internal = runtime as unknown as { agent: Agent; agentActivity?: { phase: string } };
+      internal.agent.streamFunction = async (_model, context) => {
+        requests.push(structuredClone(context.messages));
+        const message = replies.shift() ?? reply([{ type: "text", text: "Done." }]);
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: "start", partial: { ...message, content: [] } });
+        stream.push({ type: "done", reason: message.stopReason as "stop" | "toolUse", message });
+        return stream;
+      };
+      return { runtime, internal, requests };
+    };
+    const prompt = (runtime: DesktopAgentRuntime, id: string) => {
+      rows.push({ id, role: "user", content: "Continue", createdAt: new Date().toISOString() });
+      return runtime.prompt("Continue", id, `turn-${id}`);
+    };
+
+    const live = start([], [
+      reply([{ type: "toolCall", id: "task-1", name: "Task", arguments: { agent: "explorer", task: "Find it." } }], "toolUse"),
+      reply([{ type: "text", text: "The explorer is working." }]),
+      reply([{ type: "text", text: "The explorer found it." }]),
+    ]);
+    let restored: DesktopAgentRuntime | undefined;
+    try {
+      const turn = prompt(live.runtime, "user-1");
+      // The parent ended its reply; the runtime keeps the turn open for the delegate.
+      await vi.waitFor(() => expect(live.internal.agentActivity?.phase).toBe("waiting-subagents"));
+      subagentRuns.resolveRun!({
+        agentName: "explorer", status: "completed", report: "src/app.ts:12 misses the null check.", turns: 1, toolCalls: 1,
+      });
+      await turn;
+      expect(live.requests).toHaveLength(3);
+
+      const next = start(structuredClone(rows), []);
+      restored = next.runtime;
+      await prompt(next.runtime, "user-2");
+      let body: { messages: { role: string; content: unknown }[] } | undefined;
+      await streamAnthropic({
+        id: "claude-fixture", name: "Claude fixture", api: "anthropic-messages", provider: "anthropic",
+        baseUrl: "http://localhost", reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 1000,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, compat: { supportsMidConvoSystemMessages: true },
+      }, normalizeContext({ messages: next.requests[0] }), {
+        apiKey: "test", maxRetries: 0, fetch: async (_input, init) => {
+          body = JSON.parse(String(init?.body));
+          return new Response(
+            'event: message_start\ndata: {"type":"message_start","message":{"id":"m","model":"claude-fixture","usage":{"input_tokens":1,"output_tokens":0}}}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
+      }).result();
+      const wire = body!.messages;
+      // The settled delegation is listed in a context update made while the parent waited.
+      const waiting = wire.findIndex((message) => JSON.stringify(message).includes("The explorer is working."));
+      const update = wire.findIndex((message, index) => index > waiting && message.role === "system");
+      expect(waiting).toBeGreaterThan(0);
+      expect(update).toBeGreaterThan(waiting);
+      // Anthropic rejects a later system message unless a user turn precedes it.
+      const preceding = wire.flatMap((message, index) => message.role === "system" ? [wire[index - 1]?.role] : []);
+      expect(preceding.filter((role) => role !== "user")).toEqual([]);
+    } finally {
+      subagentRuns.deferred = false;
+      await live.runtime.dispose();
+      await restored?.dispose();
+    }
   });
 
   it("does not replay a report that TaskWait already returned", async () => {

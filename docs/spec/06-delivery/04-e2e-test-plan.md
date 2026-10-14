@@ -10040,6 +10040,8 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
 | Quality (unique tool-call ids) | E2E-RUNTIME-unique-tool-call-ids-per-request |
 | C — Conversation & stream (loop context ownership) | E2E-RUNTIME-loop-context-ownership |
 | Quality (loop context ownership) | E2E-RUNTIME-loop-context-ownership |
+| C: Conversation & stream (system update before a delegation resume, restored) | E2E-RUNTIME-delegation-resume-system-update-restore |
+| Quality (system update before a delegation resume, restored) | E2E-RUNTIME-delegation-resume-system-update-restore |
 | G — Plugin host lifecycle (crash report) | E2E-PLUGIN-crash-report-names-the-exit-code |
 | Quality (crash report) | E2E-PLUGIN-crash-report-names-the-exit-code |
 
@@ -17141,6 +17143,36 @@ the latest destination. These assertions measure work counts, not device FPS.
   separates a call from its result.
 - **Status:** Unit-covered; no end-to-end driver issues a real provider request
   from a context the loop appended to.
+
+### E2E-RUNTIME-delegation-resume-system-update-restore
+
+- **Preconditions:** An Agent session with a background `explorer` delegate and
+  a deterministic provider fixture whose parent reply ends while the delegate
+  still runs. The settled delegate changes the parent's context section, so a
+  model system record is saved before the runtime's resume prompt, which is not
+  stored. A recreated runtime and a deterministic Anthropic Messages fixture
+  with mid-conversation system messages enabled. No real provider credentials.
+- **Steps:** Start the delegate, let the parent end its reply, and let the
+  delegate finish so the runtime resumes the parent. Restart from the stored
+  rows, send one prompt, and read the outgoing request body the fixture
+  received.
+- **Expected:** The context update made while the parent waited replays after
+  the parent's waiting reply, and every mid-conversation `system` message
+  follows a `user` message, so the provider does not answer `role 'system' must
+  follow a 'user' message or an 'assistant' message ending in a server tool
+  result`. Records saved before an unstored message keep their recorded order
+  relative to later records.
+- **Specs:** `03-runtime/02-agent-runtime.md` §5f,
+  `03-runtime/04-data-storage.md`, `08-meta/decisions-log.md` D328.
+- **Acceptance:** C (conversation and stream), Quality.
+- **Milestone:** Post-MVP regression coverage.
+- **Automation:** `packages/agent-runtime/src/runtime.test.ts` drives the
+  delegation through a real runtime, restores the stored rows into another one,
+  and passes the captured request through Pi's Anthropic adapter;
+  `system-transcript-journal.test.ts` pins the replay position after a
+  tool-result run and the recorded order.
+- **Status:** Unit-covered; no end-to-end driver restores such a transcript
+  against an Anthropic provider fixture.
 
 ### E2E-MCP-HTTP-ACK — HTTP acknowledgement and authorization status
 
