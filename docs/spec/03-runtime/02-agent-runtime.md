@@ -1035,7 +1035,10 @@ resolves the parent wait before best-effort transcript publication; a failed
 `SubagentRun` initialization returns a tool error and never leaves a running
 record. User Stop and runtime disposal also abort the parent wait signal, so
 they can end the parent turn even if a delegate ignores its abort. Ending the
-parent loop does not otherwise abort delegates.
+parent loop does not otherwise abort delegates. The resume prompt is runtime
+context only and is not stored as a transcript row, so after a restart a model
+system record saved before it replays just after the next user row or
+tool-result run (`04-data-storage.md`).
 
 Fatal provider/stream errors (including exhausted HTTP 429) and parent aborts
 retain their existing `failed` and `aborted` outcomes. If an assistant response

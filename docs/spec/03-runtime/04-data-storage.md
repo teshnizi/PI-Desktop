@@ -206,6 +206,10 @@ order across Rust storage; parsing for validation never reserializes it. Stable 
 idempotent. The anchors restore logical model order when a user row was already
 persisted before its preceding declaration; a surviving following anchor takes
 precedence, then a preceding anchor, then the record's continuation position.
+A following anchor that was never stored (the runtime's own delegation resume
+prompt) replays the record just after the next user row or tool-result run, after
+any record already placed there: a later system message between two assistant
+messages is invalid for Anthropic.
 Forks remap surviving anchor IDs. Normal system notices remain visible; internal
 model-state rows do not produce transcript bubbles or search text.
 
