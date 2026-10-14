@@ -9920,6 +9920,8 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
 | F — Persistence (stored model binding array) | E2E-PROVIDER-stored-binding-array-reads-entry-by-entry |
 | Quality (stored model binding array) | E2E-PROVIDER-stored-binding-array-reads-entry-by-entry |
 | Quality (unique tool-call ids) | E2E-RUNTIME-unique-tool-call-ids-per-request |
+| C — Conversation & stream (system update during a tool call, restored) | E2E-RUNTIME-system-update-during-tool-call-restore |
+| Quality (system update during a tool call, restored) | E2E-RUNTIME-system-update-during-tool-call-restore |
 | C — Conversation & stream (loop context ownership) | E2E-RUNTIME-loop-context-ownership |
 | Quality (loop context ownership) | E2E-RUNTIME-loop-context-ownership |
 | G — Plugin host lifecycle (crash report) | E2E-PLUGIN-crash-report-names-the-exit-code |
@@ -16997,6 +16999,31 @@ the latest destination. These assertions measure work counts, not device FPS.
 
 - **Status:** Unit-covered; no end-to-end driver issues a real provider request
   against a duplicated transcript.
+
+### E2E-RUNTIME-system-update-during-tool-call-restore
+
+- **Preconditions:** A session transcript with a model system record saved
+  while a tool call ran: it sits after the assistant row that made the call and
+  before that call's tool row (`beforeMessageId` is the tool row id). Loaded
+  into a recreated runtime against a deterministic Anthropic Messages fixture
+  with mid-conversation system messages enabled. No real provider credentials.
+- **Steps:** Send one prompt so the runtime assembles and issues a request. Read
+  the outgoing request body the fixture received.
+- **Expected:** The tool call stays on the assistant message that made it,
+  next to that message's text, and no call-only assistant is synthesized. Every
+  mid-conversation `system` message follows a `user` message, so the provider
+  does not answer `role 'system' must follow a 'user' message or an 'assistant'
+  message ending in a server tool result`.
+- **Specs:** `03-runtime/02-agent-runtime.md` §5c and §7.0.0,
+  `08-meta/decisions-log.md` D127.
+- **Acceptance:** C (conversation and stream), Quality.
+- **Milestone:** Post-MVP regression coverage.
+- **Automation:** `packages/agent-runtime/src/system-transcript-runtime.test.ts`
+  restores the rows into a real runtime and passes the captured request through
+  Pi's Anthropic adapter.
+
+- **Status:** Unit-covered; no end-to-end driver restores such a transcript
+  against an Anthropic provider fixture.
 
 ### E2E-RUNTIME-loop-context-ownership
 

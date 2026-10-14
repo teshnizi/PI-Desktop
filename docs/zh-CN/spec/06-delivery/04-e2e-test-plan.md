@@ -5775,6 +5775,8 @@ eleven-tool-round desktop paths are verified by
 | C / F / 品质 —— 上下文估算保持安全（校准） | E2E-CONTEXT-estimate-calibration-stays-safe |
 | C — 对话与流式（工具调用 id 唯一） | E2E-RUNTIME-unique-tool-call-ids-per-request |
 | 品质（工具调用 id 唯一） | E2E-RUNTIME-unique-tool-call-ids-per-request |
+| C — 对话与流式（工具执行期间的系统更新恢复） | E2E-RUNTIME-system-update-during-tool-call-restore |
+| 品质（工具执行期间的系统更新恢复） | E2E-RUNTIME-system-update-during-tool-call-restore |
 | C — 对话与流式（循环上下文归属） | E2E-RUNTIME-loop-context-ownership |
 | 品质（循环上下文归属） | E2E-RUNTIME-loop-context-ownership |
 | G — 插件宿主生命周期（崩溃上报） | E2E-PLUGIN-crash-report-names-the-exit-code |
@@ -9093,6 +9095,19 @@ Follow the [current S3 acceptance scenario](/spec/06-delivery/04-e2e-test-plan#e
   （同一对象、无日志）。
 
 - **状态：** 单元测试覆盖；没有端到端驱动对重复转录发出真实提供商请求。
+
+### E2E-RUNTIME-system-update-during-tool-call-restore
+
+- **先决条件：** 一份会话转录，其中一条模型系统记录在工具调用执行期间保存：位于发出该调用的助手行之后、该调用的工具行之前
+  （`beforeMessageId` 为工具行 id）。在启用对话中途系统消息的确定性 Anthropic Messages 夹具下加载进重新创建的运行时；不使用真实凭据。
+- **步骤：** 发一条提示，使运行时组装并发出请求。读取夹具收到的出站请求体。
+- **预期：** 工具调用仍挂在发出它的助手消息上、紧随该消息的文本，不合成只含调用的助手消息。每条对话中途的 `system` 消息都跟在
+  `user` 消息之后，因此提供商不会回 `role 'system' must follow a 'user' message or an 'assistant' message ending in a server tool result`。
+- **规格：** 03-runtime/02-agent-runtime §5c 与 §7.0.0、08-meta/decisions-log D127。**验收：** C（对话与流）、品质。
+  **里程碑：** Post-MVP 回归覆盖。
+- **自动化：** `packages/agent-runtime/src/system-transcript-runtime.test.ts` 把这些行恢复进真实运行时，并把捕获的请求交给 Pi 的 Anthropic 适配器。
+
+- **状态：** 单元测试覆盖；没有端到端驱动对 Anthropic 提供商夹具恢复这类转录。
 
 ### E2E-RUNTIME-loop-context-ownership
 
