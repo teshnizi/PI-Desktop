@@ -148,6 +148,7 @@ import {
   estimateTokens,
 } from "./pi-runtime-estimates.js";
 import { convertToLlm } from "./pi-runtime-messages.js";
+import { RequestImageFitter } from "./request-images.js";
 import type {
   CompactionEntry,
   CompactionPreparation,
@@ -1974,6 +1975,7 @@ export class DesktopAgentRuntime {
   private delegateMutationTerminations = new Map<string, { code: string; message: string }>();
   private fullEntries: MessageEntry[];
   private readonly systemJournal = new SystemTranscriptJournal();
+  private readonly requestImages = new RequestImageFitter();
   private composedSections: Record<string, string> = {};
   private activeCompaction?: ContextCompactionRecord;
   private compactionEnabled: boolean;
@@ -2262,8 +2264,11 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
             sessionId: this.sessionId, turnId: this.turnId, message,
           });
         });
-        return alignRetainedReasoningIdentity(
-          convertToLlm(this.dropDuplicateToolCalls(messages)), this.reasoningReplayIdentity(),
+        return this.requestImages.fit(
+          alignRetainedReasoningIdentity(
+            convertToLlm(this.dropDuplicateToolCalls(messages)), this.reasoningReplayIdentity(),
+          ),
+          this.agent.state.model.inputLimits?.images?.resize,
         );
       },
       prepareRequest: ({ context }) => this.prepareToolDeclarations(context),

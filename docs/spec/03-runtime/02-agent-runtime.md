@@ -51,6 +51,17 @@ text alongside sibling text blocks; binary resources are not inlined. When no
 text block is available, the JSON fallback likewise keeps image `data` and
 resource `blob` bytes out of the model-visible text.
 
+Before each main-session provider request, the runtime fits every image block
+in user and tool-result messages, including images restored from history,
+within the model's `inputLimits.images.resize` profile, or pi's default of
+2000x2000 px and 4.5 MB of base64 when the model has none. Anthropic rejects a
+request with more than 20 images when any exceeds 2000 px on a side, and every
+turn replays the full history, so an oversized Read screenshot would otherwise
+fail every later turn. A downscaled image is followed by pi's dimension note
+(original and displayed size); an image that cannot be decoded is replaced by
+an omission note. Results are cached per image for the runtime's life. The
+persisted transcript keeps the original images.
+
 ## 4. Runtime API (package-level)
 
 ```ts

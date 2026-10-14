@@ -8616,6 +8616,31 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
 - **Milestone**: M5
 - **Status**: Documented; provider/UI journey Draft (run only in a capable environment when this surface changes)
 
+#### E2E-102k: Tool images in a request fit the provider image limits
+
+- **Preconditions**: An Anthropic vision model; an Agent session whose scratch
+  directory holds at least 21 Retina screenshots (3024x1890 PNG). Capture the
+  provider request.
+- **Steps**:
+  1. Ask the agent to Read every screenshot, then send a text-only follow-up.
+  2. Reload/recreate the runtime and send another follow-up.
+  3. Open a session saved before this fix whose history already holds more
+     than 20 such screenshots and send a follow-up.
+- **Expected**:
+  - Every image block in each provider request is at most 2000 px on both
+    sides (or within the model's `inputLimits.images.resize` profile), so
+    Anthropic never answers 400 `At least one of the image dimensions exceed
+    max allowed size for many-image requests`.
+  - Each downscaled image is followed by the note `[Image: original 3024x1890,
+    displayed at 2000x1250. ...]`; an image that cannot be decoded is replaced
+    by the omission note instead of failing the request.
+  - The older session answers instead of failing on every turn. Persisted tool
+    rows and the transcript keep the original screenshots.
+- **Specs linked**: `03-runtime/02-agent-runtime.md` §3.3
+- **Acceptance**: C (conversation & stream), Quality
+- **Milestone**: M5
+- **Status**: Unit-covered (`system-transcript-runtime.test.ts`); provider/UI journey Draft (run only in a capable environment when this surface changes)
+
 
 #### E2E-ATTACHMENTS-svg-file-fallback: SVG inputs are sent as files, not model images
 
